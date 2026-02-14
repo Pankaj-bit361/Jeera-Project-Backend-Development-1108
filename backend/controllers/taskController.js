@@ -5,17 +5,20 @@ import Organization from '../models/Organization.js';
 export const createTask = async (req, res) => {
   try {
     const { title, description, status, priority, assignee, sprintPoints, startDate, dueDate } = req.body;
-    
-    // Fetch Organization to calculate Sprint
     const org = await Organization.findById(req.organizationId);
-    if (!org) return res.status(404).json({ message: 'Organization not found' });
-
+    
+    // Calculate Sprint Index based on Monday-start weeks
     const taskStart = startDate ? new Date(startDate) : new Date();
     const orgStart = new Date(org.createdAt);
     
-    // Calculate Sprint Index: (Days since Org Creation / 7) + 1
-    const diffTime = Math.abs(taskStart - orgStart);
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)); 
+    // Adjust orgStart to the previous Monday
+    const day = orgStart.getDay();
+    const diff = orgStart.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
+    const orgMonday = new Date(orgStart.setDate(diff));
+    orgMonday.setHours(0,0,0,0);
+
+    const diffTime = Math.abs(taskStart - orgMonday);
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
     const sprintIndex = Math.floor(diffDays / 7) + 1;
 
     const task = await Task.create({
@@ -31,19 +34,17 @@ export const createTask = async (req, res) => {
       dueDate: dueDate,
       sprintIndex: sprintIndex
     });
-
     res.status(201).json(task);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// Get All Tasks (with Filtering)
 export const getTasks = async (req, res) => {
   try {
     const { status, priority, assignee, sprint } = req.query;
     const query = { organization: req.organizationId };
-
+    
     if (status) query.status = status;
     if (priority) query.priority = priority;
     if (assignee) query.assignee = assignee;
@@ -53,57 +54,35 @@ export const getTasks = async (req, res) => {
       .populate('assignee', 'name email')
       .populate('createdBy', 'name')
       .sort({ createdAt: -1 });
-
     res.json(tasks);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// Get My Tasks
 export const getMyTasks = async (req, res) => {
   try {
-    const query = {
-      organization: req.organizationId,
-      assignee: req.user._id
-    };
+    const query = { organization: req.organizationId, assignee: req.user._id };
     const tasks = await Task.find(query).sort({ priority: -1 });
     res.json(tasks);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
-}
+};
 
-// Update Task
 export const updateTask = async (req, res) => {
   try {
-    const task = await Task.findOne({ _id: req.params.id, organization: req.organizationId });
-    if (!task) return res.status(404).json({ message: 'Task not found' });
-
-    // If startDate changes, recalculate Sprint (Optional, usually sprints are fixed on creation, but let's allow update)
-    let updateData = { ...req.body };
-    if (req.body.startDate) {
-         const org = await Organization.findById(req.organizationId);
-         const taskStart = new Date(req.body.startDate);
-         const orgStart = new Date(org.createdAt);
-         const diffTime = Math.abs(taskStart - orgStart);
-         const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-         updateData.sprintIndex = Math.floor(diffDays / 7) + 1;
-    }
-
-    const updatedTask = await Task.findByIdAndUpdate(
-      req.params.id,
-      updateData,
+    const updatedTask = await Task.findOneAndUpdate(
+      { _id: req.params.id, organization: req.organizationId },
+      req.body,
       { new: true }
     ).populate('assignee', 'name email');
-
     res.json(updatedTask);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// Delete Task
 export const deleteTask = async (req, res) => {
   try {
     const task = await Task.findOneAndDelete({ _id: req.params.id, organization: req.organizationId });
@@ -114,27 +93,38 @@ export const deleteTask = async (req, res) => {
   }
 };
 
-// Add Comment
 export const addComment = async (req, res) => {
   try {
     const { text } = req.body;
     const task = await Task.findOne({ _id: req.params.id, organization: req.organizationId });
-    if (!task) return res.status(404).json({ message: 'Task not found' });
-
-    const comment = {
-      text,
-      user: req.user._id,
-      createdAt: new Date()
-    };
-
-    task.comments.push(comment);
+    task.comments.push({ text, user: req.user._id });
     await task.save();
-
-    const populatedTask = await Task.findById(task._id).populate('comments.user', 'name');
-    const newComment = populatedTask.comments[populatedTask.comments.length - 1];
-
-    res.json(newComment);
+    const populated = await Task.findById(task._id).populate('comments.user', 'name');
+    res.json(populated.comments[populated.comments.length - 1]);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
+};
+
+// Log Time Session
+export const logTime = async (req, res) => {
+    try {
+        const { duration, startTime, endTime } = req.body;
+        const task = await Task.findOne({ _id: req.params.id, organization: req.organizationId });
+        
+        if (!task) return res.status(404).json({ message: 'Task not found' });
+
+        task.timeSpent = (task.timeSpent || 0) + duration;
+        task.timeLogs.push({
+            startTime,
+            endTime,
+            duration,
+            user: req.user._id
+        });
+
+        await task.save();
+        res.json(task);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
 };

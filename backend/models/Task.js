@@ -23,14 +23,23 @@ const taskSchema = new mongoose.Schema({
     default: 0
   },
   tags: [{
-    type: String // e.g., 'Design', 'Backend', 'Bug'
+    type: String 
   }],
-  // Time Tracking
+  // Time Tracking Summary
   timeSpent: {
-    type: Number, // In seconds
+    type: Number, // Total in seconds
     default: 0
   },
-  // Date & Sprint Logic
+  // Detailed Time Logs for Charts
+  timeLogs: [{
+    startTime: Date,
+    endTime: Date,
+    duration: Number, // seconds
+    user: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    }
+  }],
   startDate: {
     type: Date,
     default: Date.now
