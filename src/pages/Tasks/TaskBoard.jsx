@@ -1,35 +1,55 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { Button } from '../../components/ui/Button';
-import { FiPlus, FiFilter, FiZap, FiMoreHorizontal, FiCalendar } from 'react-icons/fi';
+import { FiPlus, FiUser, FiUsers, FiFilter, FiCheck } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import TaskDetailModal from '../../components/Tasks/TaskDetailModal';
-import { getInitials } from '../../lib/utils';
+import SprintPlanning from '../../components/Tasks/SprintPlanning';
+import SprintReport from '../../components/Tasks/SprintReport';
+import { getSprintRange, getInitials, calculateSprint, cn } from '../../lib/utils';
 
 const TaskBoard = () => {
-    const { currentOrg } = useAuth();
+    const { currentOrg, user } = useAuth();
+    const [searchParams] = useSearchParams();
+    const sprintParam = searchParams.get('sprint');
+    
+    // Determine active sprint
+    const activeSprint = useMemo(() => {
+        if (sprintParam) return parseInt(sprintParam);
+        return currentOrg ? calculateSprint(currentOrg.createdAt) : 1;
+    }, [sprintParam, currentOrg]);
+
     const [tasks, setTasks] = useState([]);
+    const [allTasks, setAllTasks] = useState([]); // Store all to filter client-side
     const [members, setMembers] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [filter, setFilter] = useState('All');
     
+    // View State
+    const [activeTab, setActiveTab] = useState('planning'); // 'planning' | 'report'
+    const [meMode, setMeMode] = useState(false);
+    const [selectedAssignees, setSelectedAssignees] = useState([]);
+    const [showAssigneeFilter, setShowAssigneeFilter] = useState(false);
+
     // Modal State
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedTask, setSelectedTask] = useState(null);
+    const [initialStatus, setInitialStatus] = useState('Todo');
 
     useEffect(() => {
         if (currentOrg) {
             fetchTasks();
             fetchMembers();
         }
-    }, [currentOrg, filter]);
+    }, [currentOrg, activeSprint]);
 
     const fetchTasks = async () => {
         try {
             setLoading(true);
-            const query = filter !== 'All' ? `?status=${filter}` : '';
-            const { data } = await api.get(`/tasks${query}`);
+            // Fetch tasks for specific sprint
+            const { data } = await api.get(`/tasks?sprint=${activeSprint}`);
+            setAllTasks(data);
             setTasks(data);
         } catch (error) {
             toast.error('Failed to load tasks');
@@ -47,16 +67,35 @@ const TaskBoard = () => {
         }
     };
 
+    // Apply Filters Client-Side
+    useEffect(() => {
+        let filtered = [...allTasks];
+        
+        if (meMode) {
+            filtered = filtered.filter(t => t.assignee?._id === user._id);
+        }
+
+        if (selectedAssignees.length > 0) {
+            filtered = filtered.filter(t => t.assignee && selectedAssignees.includes(t.assignee._id));
+        }
+
+        setTasks(filtered);
+    }, [meMode, selectedAssignees, allTasks, user]);
+
     const handleSaveTask = async (taskData) => {
         try {
+            // Ensure sprint index is correct
+            taskData.sprintIndex = activeSprint;
+            
             if (taskData._id) {
                 const { data } = await api.put(`/tasks/${taskData._id}`, taskData);
-                setTasks(tasks.map(t => t._id === taskData._id ? data : t));
+                // Update specific task in state
+                setAllTasks(prev => prev.map(t => t._id === taskData._id ? data : t));
                 toast.success('Task updated');
-                setSelectedTask(data); // Update modal data
+                setSelectedTask(data);
             } else {
                 const { data } = await api.post('/tasks', taskData);
-                setTasks([data, ...tasks]);
+                setAllTasks(prev => [data, ...prev]);
                 toast.success('Task created');
             }
         } catch (error) {
@@ -65,135 +104,128 @@ const TaskBoard = () => {
         }
     };
 
-    const handleDelete = async (e, taskId) => {
-        e.stopPropagation();
-        if(!confirm('Are you sure you want to delete this task?')) return;
-        try {
-            await api.delete(`/tasks/${taskId}`);
-            setTasks(tasks.filter(t => t._id !== taskId));
-            toast.success('Task deleted');
-        } catch (error) {
-            toast.error('Delete failed');
-        }
-    }
-
-    const openCreateModal = () => {
+    const openCreateModal = (status = 'Todo') => {
         setSelectedTask(null);
+        setInitialStatus(status);
         setIsModalOpen(true);
     };
 
-    const openEditModal = (task) => {
-        setSelectedTask(task);
-        setIsModalOpen(true);
-    };
-
-    const getPriorityBadge = (p) => {
-        const styles = {
-            High: 'bg-red-50 text-red-600 border-red-100',
-            Medium: 'bg-orange-50 text-orange-600 border-orange-100',
-            Low: 'bg-green-50 text-green-600 border-green-100'
-        };
-        return styles[p] || 'bg-slate-50 text-slate-600 border-slate-100';
+    const toggleAssignee = (id) => {
+        if (selectedAssignees.includes(id)) {
+            setSelectedAssignees(prev => prev.filter(mid => mid !== id));
+        } else {
+            setSelectedAssignees(prev => [...prev, id]);
+        }
     };
 
     return (
-        <div className="h-full flex flex-col">
-            {/* Header Controls */}
-            <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm mb-6 flex flex-col sm:flex-row justify-between items-center gap-4">
-                <div className="flex items-center gap-4 w-full sm:w-auto">
-                     <h1 className="text-xl font-bold text-slate-800 px-2">Board</h1>
-                     <div className="h-8 w-px bg-slate-200 hidden sm:block"></div>
-                     <div className="flex bg-slate-100 p-1 rounded-lg">
-                        <button className="px-3 py-1.5 bg-white text-slate-800 text-sm font-semibold rounded-md shadow-sm">Kanban</button>
-                        <button className="px-3 py-1.5 text-slate-500 text-sm font-medium hover:text-slate-700">List</button>
-                     </div>
-                </div>
-
-                <div className="flex gap-3 w-full sm:w-auto">
-                    <div className="relative flex-1 sm:flex-none">
-                        <FiFilter className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                        <select 
-                            className="w-full pl-9 pr-8 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 hover:bg-slate-100 transition-colors appearance-none cursor-pointer"
-                            value={filter}
-                            onChange={(e) => setFilter(e.target.value)}
-                        >
-                            <option value="All">All Status</option>
-                            <option value="Todo">To Do</option>
-                            <option value="In Progress">Working</option>
-                            <option value="Done">Completed</option>
-                        </select>
-                    </div>
-                    <Button onClick={openCreateModal} className="shadow-orange-500/20">
-                        <FiPlus className="mr-2" /> New Task
-                    </Button>
-                </div>
+        <div className="h-full flex flex-col space-y-6">
+            {/* Page Header */}
+            <div>
+                <h1 className="text-2xl font-bold text-slate-900">Sprint Dashboard</h1>
+                <p className="text-slate-500 font-medium">
+                    {currentOrg ? getSprintRange(currentOrg.createdAt, activeSprint) : 'Loading...'}
+                </p>
             </div>
 
-            {loading ? (
-                <div className="flex-1 flex justify-center items-center"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-orange-500"></div></div>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-10">
-                    {tasks.map(task => (
-                        <div 
-                            key={task._id} 
-                            onClick={() => openEditModal(task)}
-                            className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:-translate-y-1 transition-all duration-300 cursor-pointer group flex flex-col h-[240px]"
-                        >
-                            <div className="flex justify-between items-start mb-4">
-                                <div className="flex gap-2">
-                                    <span className={`text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-full border ${getPriorityBadge(task.priority)}`}>
-                                        {task.priority}
-                                    </span>
-                                    <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-full border bg-slate-50 border-slate-200 text-slate-500">
-                                        S{task.sprintIndex || 1}
-                                    </span>
-                                </div>
-                                <button 
-                                    onClick={(e) => handleDelete(e, task._id)} 
-                                    className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all p-1"
-                                >
-                                    <FiMoreHorizontal />
-                                </button>
-                            </div>
-                            
-                            <h3 className="font-bold text-slate-800 mb-2 text-lg line-clamp-2 leading-tight group-hover:text-orange-600 transition-colors">{task.title}</h3>
-                            <p className="text-slate-500 text-sm mb-4 line-clamp-2 flex-1 leading-relaxed">{task.description || 'No description provided.'}</p>
-                            
-                            <div className="flex items-center justify-between pt-4 border-t border-slate-50 mt-auto">
-                                <div className="flex items-center gap-2">
-                                    {task.assignee ? (
-                                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center text-xs font-bold ring-2 ring-white shadow-sm" title={task.assignee.name}>
-                                            {getInitials(task.assignee.name)}
-                                        </div>
-                                    ) : (
-                                        <div className="w-8 h-8 rounded-full bg-slate-50 text-slate-400 flex items-center justify-center border border-dashed border-slate-300">
-                                            <FiPlus className="text-xs" />
-                                        </div>
-                                    )}
-                                    <div className="flex items-center gap-1 bg-orange-50 px-2 py-1 rounded-lg text-xs font-bold text-orange-600 border border-orange-100" title="Sprint Points">
-                                        <FiZap className="text-orange-500" />
-                                        <span>{task.sprintPoints || 0}</span>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
-                                    <FiCalendar />
-                                    <span>{task.dueDate ? new Date(task.dueDate).toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) : 'No Date'}</span>
-                                </div>
-                            </div>
-                        </div>
-                    ))}
-                    
-                    {/* Add New Card Placeholder */}
-                    <div 
-                        onClick={openCreateModal}
-                        className="border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center p-6 text-slate-400 hover:border-orange-300 hover:text-orange-500 hover:bg-orange-50/50 transition-all cursor-pointer h-[240px]"
+            {/* Controls Bar */}
+            <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-2 rounded-xl shadow-sm border border-slate-100">
+                {/* Tabs */}
+                <div className="flex bg-slate-50 p-1 rounded-lg w-full md:w-auto">
+                    <button 
+                        onClick={() => setActiveTab('planning')}
+                        className={cn("px-6 py-2 rounded-md text-sm font-semibold transition-all", activeTab === 'planning' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
                     >
-                        <div className="w-12 h-12 rounded-full bg-slate-50 group-hover:bg-orange-100 flex items-center justify-center mb-3 transition-colors">
-                            <FiPlus className="text-xl" />
-                        </div>
-                        <span className="font-medium">Add New Task</span>
-                    </div>
+                        Sprint Planning
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('report')}
+                        className={cn("px-6 py-2 rounded-md text-sm font-semibold transition-all", activeTab === 'report' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+                    >
+                        Sprint Report
+                    </button>
                 </div>
+
+                {/* Filters (Only visible in Planning Tab) */}
+                {activeTab === 'planning' && (
+                    <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+                        <button 
+                            onClick={() => setMeMode(!meMode)}
+                            className={cn("flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors", 
+                                meMode ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                            )}
+                        >
+                            <FiUser /> Me Mode
+                        </button>
+
+                        <div className="relative">
+                            <button 
+                                onClick={() => setShowAssigneeFilter(!showAssigneeFilter)}
+                                className={cn("flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors", 
+                                    selectedAssignees.length > 0 ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                                )}
+                            >
+                                <FiUsers /> Assignees {selectedAssignees.length > 0 && `(${selectedAssignees.length})`}
+                            </button>
+
+                            {/* Assignee Dropdown */}
+                            {showAssigneeFilter && (
+                                <>
+                                    <div className="fixed inset-0 z-10" onClick={() => setShowAssigneeFilter(false)}></div>
+                                    <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-100 z-20 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                        <div className="p-3 border-b border-slate-50 bg-slate-50/50">
+                                            <input placeholder="Search member..." className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-indigo-500" />
+                                        </div>
+                                        <div className="max-h-60 overflow-y-auto p-1">
+                                            {members.map(m => (
+                                                <button 
+                                                    key={m._id}
+                                                    onClick={() => toggleAssignee(m._id)}
+                                                    className="w-full flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg transition-colors text-left"
+                                                >
+                                                    <div className="relative">
+                                                        <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-xs font-bold">
+                                                            {getInitials(m.name)}
+                                                        </div>
+                                                        {selectedAssignees.includes(m._id) && (
+                                                            <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-indigo-600 rounded-full flex items-center justify-center text-white text-[10px] border-2 border-white">
+                                                                <FiCheck />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <span className={cn("text-sm", selectedAssignees.includes(m._id) ? "font-bold text-indigo-900" : "text-slate-700")}>{m.name}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        <button className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">
+                            <FiUsers /> Team
+                        </button>
+                    </div>
+                )}
+            </div>
+
+            {/* Content Area */}
+            {loading ? (
+                <div className="flex-1 flex justify-center items-center py-20">
+                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-500"></div>
+                </div>
+            ) : (
+                <>
+                    {activeTab === 'planning' ? (
+                        <SprintPlanning 
+                            tasks={tasks} 
+                            onEdit={(task) => { setSelectedTask(task); setIsModalOpen(true); }}
+                            onCreate={openCreateModal}
+                        />
+                    ) : (
+                        <SprintReport tasks={allTasks} /> 
+                    )}
+                </>
             )}
 
             <TaskDetailModal 
@@ -203,6 +235,7 @@ const TaskBoard = () => {
                 members={members}
                 onSave={handleSaveTask}
                 onUpdate={fetchTasks}
+                initialStatus={initialStatus}
             />
         </div>
     );

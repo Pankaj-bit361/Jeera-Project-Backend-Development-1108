@@ -22,6 +22,9 @@ const taskSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  tags: [{
+    type: String // e.g., 'Design', 'Backend', 'Bug'
+  }],
   // Time Tracking
   timeSpent: {
     type: Number, // In seconds

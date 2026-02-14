@@ -1,5 +1,6 @@
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { addDays, format } from 'date-fns';
 
 export function cn(...inputs) {
   return twMerge(clsx(inputs));
@@ -17,4 +18,12 @@ export const calculateSprint = (orgCreatedAt) => {
     const diffTime = Math.abs(now - start);
     const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
     return Math.floor(diffDays / 7) + 1;
+};
+
+export const getSprintRange = (orgCreatedAt, sprintIndex) => {
+    if (!orgCreatedAt || !sprintIndex) return 'Loading...';
+    const orgStart = new Date(orgCreatedAt);
+    const start = addDays(orgStart, (sprintIndex - 1) * 7);
+    const end = addDays(start, 6);
+    return `${format(start, 'dd MMM yyyy')} - ${format(end, 'dd MMM yyyy')}`;
 };
