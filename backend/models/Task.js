@@ -18,6 +18,10 @@ const taskSchema = new mongoose.Schema({
     enum: ['Low', 'Medium', 'High'],
     default: 'Medium'
   },
+  sprintPoints: {
+    type: Number,
+    default: 0
+  },
   organization: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Organization',
@@ -43,6 +47,8 @@ const taskSchema = new mongoose.Schema({
       default: Date.now
     }
   }]
-}, { timestamps: true });
+}, {
+  timestamps: true
+});
 
 export default mongoose.model('Task', taskSchema);
