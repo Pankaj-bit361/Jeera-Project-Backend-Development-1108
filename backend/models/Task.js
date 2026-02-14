@@ -22,6 +22,23 @@ const taskSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Time Tracking
+  timeSpent: {
+    type: Number, // In seconds
+    default: 0
+  },
+  // Date & Sprint Logic
+  startDate: {
+    type: Date,
+    default: Date.now
+  },
+  dueDate: {
+    type: Date
+  },
+  sprintIndex: {
+    type: Number,
+    default: 1
+  },
   organization: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Organization',

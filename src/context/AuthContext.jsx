@@ -19,23 +19,33 @@ export const AuthProvider = ({ children }) => {
       if (token && savedUser) {
         const parsedUser = JSON.parse(savedUser);
         setUser(parsedUser);
-        setOrganizations(parsedUser.organizations || []);
-
-        if (savedOrgId && parsedUser.organizations) {
-            const org = parsedUser.organizations.find(o => o._id === savedOrgId);
-            if (org) setCurrentOrg(org);
-            else if (parsedUser.organizations.length > 0) {
-                // Fallback if saved org ID is invalid
-                setCurrentOrg(parsedUser.organizations[0]);
-                localStorage.setItem('currentOrgId', parsedUser.organizations[0]._id);
+        
+        // Fetch fresh organizations list to ensure sync
+        try {
+            const { data: orgs } = await api.get('/organizations');
+            setOrganizations(orgs);
+            
+            let activeOrg = null;
+            if (savedOrgId) {
+                activeOrg = orgs.find(o => o._id === savedOrgId);
             }
-        } else if (parsedUser.organizations?.length > 0) {
-            setCurrentOrg(parsedUser.organizations[0]);
-            localStorage.setItem('currentOrgId', parsedUser.organizations[0]._id);
+            if (!activeOrg && orgs.length > 0) {
+                activeOrg = orgs[0];
+            }
+
+            if (activeOrg) {
+                setCurrentOrg(activeOrg);
+                localStorage.setItem('currentOrgId', activeOrg._id);
+            }
+        } catch (e) {
+            console.error("Failed to sync orgs on init", e);
+            // Fallback to local data if API fails
+            setOrganizations(parsedUser.organizations || []);
         }
       }
       setLoading(false);
     };
+
     initAuth();
   }, []);
 
@@ -90,40 +100,25 @@ export const AuthProvider = ({ children }) => {
       setCurrentOrg(org);
       localStorage.setItem('currentOrgId', org._id);
       toast.success(`Switched to ${org.name}`);
-      // Reload page to refresh data or trigger re-fetch via effect in components
-      window.location.reload(); 
+      // Simple reload to ensure all components re-fetch with new Org ID
+      setTimeout(() => window.location.reload(), 100); 
     }
   };
-  
+
   const refreshUser = async () => {
-      try {
-        // Assuming there isn't a direct /me endpoint, we use the stored data or re-login logic
-        // For now, we rely on updated responses from other endpoints if needed, 
-        // but let's implement a quick fetch of orgs to keep sidebar updated
-        const { data } = await api.get('/organizations');
-        setOrganizations(data);
-        
-        // Update local storage user object with new orgs
-        const updatedUser = { ...user, organizations: data };
-        setUser(updatedUser);
-        localStorage.setItem('user', JSON.stringify(updatedUser));
-      } catch (e) {
-          console.error("Failed to refresh user data");
-      }
+    try {
+      const { data } = await api.get('/organizations');
+      setOrganizations(data);
+      const updatedUser = { ...user, organizations: data };
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+    } catch (e) {
+      console.error("Failed to refresh user data");
+    }
   }
 
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      currentOrg, 
-      organizations, 
-      login, 
-      signup, 
-      logout, 
-      loading,
-      switchOrganization,
-      refreshUser
-    }}>
+    <AuthContext.Provider value={{ user, currentOrg, organizations, login, signup, logout, loading, switchOrganization, refreshUser }}>
       {!loading && children}
     </AuthContext.Provider>
   );
